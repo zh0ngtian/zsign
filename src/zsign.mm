@@ -13,6 +13,7 @@
 #include "openssl.h"
 #include "timer.h"
 #include "archive.h"
+#include "ocsp_response.hpp"
 
 #include <openssl/ocsp.h>
 #include <openssl/x509.h>
@@ -344,17 +345,15 @@ int checkCert(
 																NSURLResponse * _Nullable response,
 																NSError * _Nullable error) {
 		if (error) {
+			OCSP_CERTID_free(cert_id);
 			completionHandler(2, nil, error.localizedDescription);
 			return;
 		}
 		
 		NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
 		if (httpResponse.statusCode == 200 && data) {
-			// You can save `data` or parse the response
-			const void *respBytes = [data bytes];
-			OCSP_RESPONSE *resp;
-			d2i_OCSP_RESPONSE(&resp, (const unsigned char**)&respBytes, data.length);
-			OCSP_BASICRESP *basic = OCSP_response_get1_basic(resp);
+			int status = ZSignOCSPStatus((const unsigned char *)data.bytes, (long)data.length, cert_id);
+			OCSP_CERTID_free(cert_id);
 			ASN1_TIME *expirationDateAsn1 = X509_get_notAfter(cert);
 			NSString *fullDateString = [NSString stringWithFormat:@"20%s", expirationDateAsn1->data];
 			
@@ -364,19 +363,11 @@ int checkCert(
 			formatter.locale = NSLocale.currentLocale;
 			NSDate *expirationDate = [formatter dateFromString:fullDateString];
 			
-			int status, reason;
-			if (OCSP_resp_find_status(basic, cert_id, &status, &reason, NULL, NULL, NULL)) {
-				completionHandler(status, expirationDate, nil);
-			} else {
-				completionHandler(2, expirationDate, nil);
-			}
-			
-			OCSP_CERTID_free(cert_id);
-			OCSP_BASICRESP_free(basic);
-			OCSP_RESPONSE_free(resp);
+			completionHandler(status, expirationDate, nil);
 			
 			
 		} else {
+			OCSP_CERTID_free(cert_id);
 			completionHandler(2, nil, @"Invalid response or no data");
 			return;
 		}
